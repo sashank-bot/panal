@@ -1,28 +1,42 @@
 <?php
-// 1. DATABASE CONFIGURATION
-$db_host = "sql101.infinityfree.com"; // Your MySQL Hostname
-$db_user = "if0_42104418";                 // Your MySQL Username
-$db_pass = "WCxVeJiTxhnnAx";              // Your Account Password
-$db_name = "if0_42104418_cyrus";            // Your MySQL Database Name
+// 1. DYNAMIC DATABASE CONFIGURATION FOR RAILWAY
+// Falls back to InfinityFree values only if Railway environment variables are missing
+$db_host = getenv('MYSQLHOST') ?: "sql101.infinityfree.com"; 
+$db_port = getenv('MYSQLPORT') ?: "3306";
+$db_user = getenv('MYSQLUSER') ?: "if0_42104418";                 
+$db_pass = getenv('MYSQLPASSWORD') ?: "WCxVeJiTxhnnAx";              
+$db_name = getenv('MYSQLDATABASE') ?: (getenv('MYSQL_DATABASE') ?: "if0_42104418_cyrus");            
 
 // 2. CHOOSE YOUR DASHBOARD PASSWORD
 $admin_password = "Blucyrus";
 
 session_start();
-$conn = new mysqli($db_host, $db_user, $db_pass, $db_name);
-if ($conn->connect_error) { die("Connection failed: " . $conn->connect_error); }
+
+// Connect using host and explicit port configuration needed by Railway
+$conn = new mysqli($db_host, $db_user, $db_pass, $db_name, $db_port);
+if ($conn->connect_error) { 
+    error_log("Database connection failure: " . $conn->connect_error);
+    die("Connection failed. Please check backend server configuration logs."); 
+}
 
 // Handle Login
 if (isset($_POST['login'])) {
-    if ($_POST['password'] === $admin_password) { $_SESSION['logged_in'] = true; } 
-    else { $error = "Incorrect password!"; }
+    if ($_POST['password'] === $admin_password) { 
+        $_SESSION['logged_in'] = true; 
+    } else { 
+        $error = "Incorrect password!"; 
+    }
 }
-if (isset($_GET['logout'])) { session_destroy(); header("Location: index.php"); exit(); }
+if (isset($_GET['logout'])) { 
+    session_destroy(); 
+    header("Location: index.php"); 
+    exit(); 
+}
 
 // If not logged in, show the login form
 if (!isset($_SESSION['logged_in'])) {
     echo '<form method="POST" style="margin:100px auto; width:300px; text-align:center; font-family:sans-serif;">
-          <h2>Admin Login</h2>'.(isset($error)?"<p style='color:red'>$error</p>":"").'
+          <h2>Admin Login</h2>'.(isset($error)?"<p style='color:red'>".htmlspecialchars($error)."</p>":"").'
           <input type="password" name="password" placeholder="Password" required style="padding:8px; width:100%; margin-bottom:10px;"><br>
           <button type="submit" name="login" style="padding:8px 20px; cursor:pointer;">Login</button>
           </form>';
@@ -32,16 +46,19 @@ if (!isset($_SESSION['logged_in'])) {
 // Handle Key Generation
 if (isset($_POST['generate'])) {
     $new_key = "KEY-" . strtoupper(bin2hex(random_bytes(8)));
-    $stmt = $conn->prepare("INSERT INTO `keys` (license_key) VALUES (?)");
+    $stmt = $conn->prepare("INSERT INTO `keys` (license_key, status) VALUES (?, 'unused')");
     $stmt->bind_param("s", $new_key);
     $stmt->execute();
     $stmt->close();
 }
 
-// Handle Key Deletion
+// Handle Key Deletion (Prepared Statement applied for SQL Injection Defense)
 if (isset($_GET['delete'])) {
     $id = intval($_GET['delete']);
-    $conn->query("DELETE FROM `keys` WHERE id=$id");
+    $stmt = $conn->prepare("DELETE FROM `keys` WHERE id = ?");
+    $stmt->bind_param("i", $id);
+    $stmt->execute();
+    $stmt->close();
     header("Location: index.php");
     exit();
 }
@@ -86,13 +103,20 @@ $result = $conn->query("SELECT * FROM `keys` ORDER BY id DESC");
         </tr>
         <?php while($row = $result->fetch_assoc()): ?>
         <tr>
-            <td><?php echo $row['id']; ?></td>
-            <td><strong><?php echo $row['license_key']; ?></strong></td>
-            <td><span style="color:<?php echo $row['status']=='used'?'red':'green'; ?>"><?php echo ucfirst($row['status']); ?></span></td>
-            <td><a href="?delete=<?php echo $row['id']; ?>" class="btn btn-del" onclick="return confirm('Delete this key?')">Delete</a></td>
+            <td><?php echo htmlspecialchars($row['id']); ?></td>
+            <td><strong><?php echo htmlspecialchars($row['license_key']); ?></strong></td>
+            <td>
+                <span style="color:<?php echo $row['status']=='used'?'red':'green'; ?>">
+                    <?php echo htmlspecialchars(ucfirst($row['status'] ?? 'unused')); ?>
+                </span>
+            </td>
+            <td>
+                <a href="?delete=<?php echo htmlspecialchars($row['id']); ?>" class="btn btn-del" onclick="return confirm('Delete this key?')">Delete</a>
+            </td>
         </tr>
         <?php endwhile; ?>
     </table>
 </div>
 </body>
 </html>
+
